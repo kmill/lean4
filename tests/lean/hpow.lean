@@ -4,8 +4,6 @@ import Lean.Data.Rat
 Test the `rightact%` elaborator for `HPow.hPow`, added to address #2220
 -/
 
-macro_rules | `($x ^ $y) => `(rightact% HPow.hPow $x $y)
-
 open Lean
 
 variable (n : Nat) (m : Int) (q : Rat)
