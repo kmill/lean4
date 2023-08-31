@@ -79,13 +79,13 @@ private def throwForInFailure (forInInstance : Expr) : TermElabM Expr :=
 namespace Op
 /-!
 
-The elaborator for `binop%`, `binop_lazy%`, and `unop%` terms.
+The elaborator for `binop%`, `binop_lazy%`, `leftact%`, `rightact%`, and `unop%` terms.
 
 It works as follows:
 
 1- Expand macros.
-2- Convert `Syntax` object corresponding to the `binop%` (`binop_lazy%` and `unop%`) term into a `Tree`.
-   The `toTree` method visits nested `binop%` (`binop_lazy%` and `unop%`) terms and parentheses.
+2- Convert `Syntax` object corresponding to the `binop%` (and `binop_lazy%`, `unop%`, etc.) term into a `Tree`.
+   The `toTree` method visits nested `binop%` (and `binop_lazy%`, `unop%`, etc.) terms and parentheses.
 3- Synthesize pending metavariables without applying default instances and using the
    `(mayPostpone := true)`.
 4- Tries to compute a maximal type for the tree computed at step 2.
@@ -117,16 +117,20 @@ coercions inside of a `HAdd` instance.
 
 Remarks:
 
-In the new `binop%` and related elaborators the decision whether a coercion will be inserted or not
-is made at `binop%` elaboration time. This was not the case in the old elaborator.
-For example, an instance, such as `HAdd Int ?m ?n`, could be created when executing
-the `binop%` elaborator, and only resolved much later. We try to minimize this problem
-by synthesizing pending metavariables at step 3.
+* In the new `binop%` and related elaborators the decision whether a coercion will be inserted or not
+  is made at `binop%` elaboration time. This was not the case in the old elaborator.
+  For example, an instance, such as `HAdd Int ?m ?n`, could be created when executing
+  the `binop%` elaborator, and only resolved much later. We try to minimize this problem
+  by synthesizing pending metavariables at step 3.
 
-For types containing heterogeneous operators (e.g., matrix multiplication), step 4 will fail
-and we will skip coercion insertion. For example, `x : Matrix Real 5 4` and `y : Matrix Real 4 8`,
-there is no coercion `Matrix Real 5 4` from `Matrix Real 4 8` and vice-versa, but
-`x * y` is elaborated successfully and has type `Matrix Real 5 8`.
+* For types containing heterogeneous operators (e.g., matrix multiplication), step 4 will fail
+  and we will skip coercion insertion. For example, `x : Matrix Real 5 4` and `y : Matrix Real 4 8`,
+  there is no coercion `Matrix Real 5 4` from `Matrix Real 4 8` and vice-versa, but
+  `x * y` is elaborated successfully and has type `Matrix Real 5 8`.
+
+* The `leftact%` and `rightact%` elaborators are to handle binary operations where only one of
+  the arguments participates in the protocol. For example, in `2 ^ n + y` with `n : Nat` and `y : Real`,
+  we do not want to coerce `n` to be a real as well, but we do want to elaborate `2 : Real`.
 -/
 
 private inductive Tree where
@@ -144,6 +148,12 @@ private inductive Tree where
   `ref` is the original syntax that expanded into `unop%`.
   -/
   | unop (ref : Syntax) (f : Expr) (arg : Tree)
+  /--
+  `ref` is the original syntax that expanded into `rightact%` or `leftact%`.
+  `right` is whether this is a right action (vs a left action); if it is a right (resp. left)
+  action, then the `rhs` (resp. `lhs`) is not processed.
+  -/
+  | action (ref : Syntax) (right : Bool) (f : Expr) (lhs rhs : Tree)
   /--
   Used for assembling the info tree. We store this information
   to make sure "go to definition" behaves similarly to notation defined without using `binop%` helper elaborator.
@@ -167,6 +177,8 @@ where
     | `(binop% $f $lhs $rhs) => processBinOp (lazy := false) s f lhs rhs
     | `(binop_lazy% $f $lhs $rhs) => processBinOp (lazy := true) s f lhs rhs
     | `(unop% $f $arg) => processUnOp s f arg
+    | `(leftact% $f $lhs $rhs) => processAction (right := false) s f lhs rhs
+    | `(rightact% $f $lhs $rhs) => processAction (right := true) s f lhs rhs
     | `(($e)) =>
       if hasCDot e then
         processLeaf s
@@ -188,6 +200,13 @@ where
   processUnOp (ref : Syntax) (f arg : Syntax) := do
     let some f ← resolveId? f | throwUnknownConstant f.getId
     return .unop ref f (← go arg)
+
+  processAction (ref : Syntax) (f lhs rhs : Syntax) (right : Bool) := do
+    let some f ← resolveId? f | throwUnknownConstant f.getId
+    if right then
+      return .action ref true f (← go lhs) (← processLeaf rhs)
+    else
+      return .action ref false f (← processLeaf lhs) (← go rhs)
 
   processLeaf (s : Syntax) := do
     let e ← elabTerm s none
@@ -231,6 +250,7 @@ where
        | .macroExpansion _ _ _ nested => go nested
        | .binop _ _ _ lhs rhs => go lhs; go rhs
        | .unop _ _ arg => go arg
+       | .action _ right _ lhs rhs => if right then go lhs else go rhs
        | .term _ _ val =>
          let type ← instantiateMVars (← inferType val)
          unless isUnknown type do
@@ -265,6 +285,9 @@ private def toExprCore (t : Tree) : TermElabM Expr := do
   | .unop ref f arg =>
     withRef ref <| withInfoContext' ref (mkInfo := mkTermInfo .anonymous ref) do
       mkUnOp f (← toExprCore arg)
+  | .action ref _ f lhs rhs =>
+    withRef ref <| withInfoContext' ref (mkInfo := mkTermInfo .anonymous ref) do
+      mkBinOp false f (← toExprCore lhs) (← toExprCore rhs)
   | .macroExpansion macroName stx stx' nested =>
     withRef stx <| withInfoContext' stx (mkInfo := mkTermInfo macroName stx) do
       withMacroExpansion stx stx' do
@@ -363,6 +386,11 @@ mutual
           return .term ref infoTrees r
       | .unop ref f arg =>
         return .unop ref f (← go arg none false false)
+      | .action ref right f lhs rhs =>
+        if right then
+          return .action ref true f (← go lhs none false false) rhs
+        else
+          return .action ref false f lhs (← go rhs none false false)
       | .term ref trees e =>
         let type ← instantiateMVars (← inferType e)
         trace[Elab.binop] "visiting {e} : {type} =?= {maxType}"
@@ -405,8 +433,14 @@ def elabBinOpLazy : TermElab := elabOp
 @[builtin_term_elab unop]
 def elabUnOp : TermElab := elabOp
 
+@[builtin_term_elab leftact]
+def elabLeftAct : TermElab := elabOp
+
+@[builtin_term_elab rightact]
+def elabRightAct : TermElab := elabOp
+
 /--
-  Elaboration functionf for `binrel%` and `binrel_no_prop%` notations.
+  Elaboration functions for `binrel%` and `binrel_no_prop%` notations.
   We use the infrastructure for `binop%` to make sure we propagate information between the left and right hand sides
   of a binary relation.
 
