@@ -492,6 +492,10 @@ mutual
             let valStx ← updateSource valStx
             return { field with lhs := [field.lhs.head!], val := FieldVal.term valStx }
 
+  /--
+  Adds in the missing fields using the explicit sources.
+  Invariant: a missing field always comes from the first source that can provide it.
+  -/
   private partial def addMissingFields (s : Struct) : TermElabM Struct := do
     let env ← getEnv
     let fieldNames := getStructureFields env s.structName
@@ -499,38 +503,40 @@ mutual
     withRef ref do
       let fields ← fieldNames.foldlM (init := []) fun fields fieldName => do
         match findField? s.fields fieldName with
-        | some field => return field::fields
+        | some field => return field :: fields -- Field already present
         | none       =>
           let addField (val : FieldVal Struct) : TermElabM Fields := do
             return { ref, lhs := [FieldLHS.fieldName ref fieldName], val := val } :: fields
           match Lean.isSubobjectField? env s.structName fieldName with
           | some substructName =>
-            -- get all leaf fields of `substructName`
-            let downFields := getStructureFieldsFlattened env substructName false
-            -- filter out all explicit sources that do not share a leaf field keeping
-            -- structure with no fields
-            let filtered := s.source.explicit.filter fun source =>
-              let sourceFields := getStructureFieldsFlattened env source.structName false
-              sourceFields.any (fun name => downFields.contains name) || sourceFields.isEmpty
-            -- take the first such one remaining
-            match filtered[0]? with
-            | some src =>
-              -- if it is the correct type, use it
+            -- Try each source one at a time to see if any can supply a field of the subobject.
+            for i in [0 : s.source.explicit.size] do
+              let src := s.source.explicit[i]!
+              -- If the source is of the correct type, use it directly
               if src.structName == substructName then
-                addField (FieldVal.term src.stx)
-              -- if a projection of it is the correct type, use it
-              else if let some val ← mkProjStx? src.stx src.structName fieldName then
-                addField (FieldVal.term val)
-              -- else eta expand and try again
-              else
-                let substruct := Struct.mk ref substructName #[] [] s.source
-                let substruct ← expandStruct substruct
-                addField (FieldVal.nested substruct)
-            | none =>
-              let substruct := Struct.mk ref substructName #[] [] s.source
-              let substruct ← expandStruct substruct
-              addField (FieldVal.nested substruct)
+                return ← addField (FieldVal.term src.stx)
+              -- If the source contains a projection to the subobject, use it
+              if let some val ← mkProjStx? src.stx src.structName fieldName then
+                return ← addField (FieldVal.term val)
+              -- Get all leaf fields of `substructName` and `src`
+              let downFields := getStructureFieldsFlattened env substructName false
+              let srcFields := getStructureFieldsFlattened env src.structName false
+              if srcFields.any downFields.contains then
+                -- They have a field in common, so recursively construct the subobject structure
+                -- using the given sources. We can drop the first i-1 sources since they have
+                -- no fields in common.
+                let explicit' := s.source.explicit.extract i s.source.explicit.size
+                let source' := {s.source with explicit := explicit'}
+                let substruct ← expandStruct <| Struct.mk ref substructName #[] [] source'
+                return ← addField (FieldVal.nested substruct)
+            -- No sources could provide this subobject.
+            -- Recurse to handle default values for fields.
+            let substruct := Struct.mk ref substructName #[] [] {s.source with explicit := #[]}
+            let substruct ← expandStruct substruct
+            addField (FieldVal.nested substruct)
           | none =>
+            -- Since this is not a subobject field, we are free to use the first source that can
+            -- provide it.
             if let some val ← s.source.explicit.findSomeM? fun source => mkProjStx? source.stx source.structName fieldName then
               addField (FieldVal.term val)
             else if s.source.implicit.isSome then
