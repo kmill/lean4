@@ -13,7 +13,7 @@ open Meta
 
 @[builtin_tactic Lean.Parser.Tactic.Conv.rewrite] def evalRewrite : Tactic := fun stx => do
   let config ← Tactic.elabRewriteConfig stx[1]
-  withRWRulesSeq stx[0] stx[2] fun symm term => do
+  withRWRulesSeq false stx[0] stx[2] fun _ symm term => do
     Term.withSynthesize <| withMainContext do
       let e ← elabTerm term none true
       let r ←  (← getMainGoal).rewrite (← getLhs) e symm (config := config)
