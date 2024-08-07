@@ -401,8 +401,9 @@ private def mkBinOp' (kind : BinOpKind) (f : Expr) (lhs rhs : Expr) : StateRefT 
     trace[Elab.binop] "mkBinOp' key {repr key}"
     if let some e := (← get).cache.find? key then
       trace[Elab.binop] "mkBinOp' cache hit"
+      let rhs' ← if kind == .lazy then mkFunUnit rhs else pure rhs
       -- Optimized `e.instantiateRev #[lhs, rhs]`
-      return mkApp2 e.appFn!.appFn! lhs rhs
+      return mkApp2 e.appFn!.appFn! lhs rhs'
     else
       trace[Elab.binop] "mkBinOp' cache miss"
       let e ← mk
