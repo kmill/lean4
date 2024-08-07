@@ -99,6 +99,8 @@ Here are brief descriptions of each of the operator types:
   exponentiation functions, and we prefer the former in the case of `x ^ 2`, but `binop%` would choose the latter. (#2854)
 - There are also `binrel%` and `binrel_no_prop%` (see the docstring for `elabBinRelCore`).
 
+Assumption: each `f` has its explicit arguments as its last arguments.
+
 The elaborator works as follows:
 
 1- Expand macros.
@@ -154,12 +156,12 @@ Remarks:
 private inductive BinOpKind where
   | regular   -- `binop%`
   | lazy      -- `binop_lazy%`
-  deriving BEq, Hashable
+  deriving BEq, Hashable, Repr
 
 private inductive ActOpKind where
   | leftact   -- `leftact%`
   | rightact  -- `rightact%`
-  deriving BEq, Hashable
+  deriving BEq, Hashable, Repr
 
 private inductive Tree where
   /--
@@ -336,104 +338,117 @@ private def mkUnOp (f : Expr) (arg : Expr) : TermElabM Expr := do
 
 deriving instance Hashable for Syntax.Preresolved
 
-/-- `Syntax` without source info, for keys in `ToExprCache`. -/
-inductive KSyntax where
+/-- `Syntax` without source info, for keys in `ToExprState`. -/
+private inductive KSyntax where
   | missing : KSyntax
   | node (kind : SyntaxNodeKind) (args : Array KSyntax) : KSyntax
   | atom (val : String) : KSyntax
   | ident (rawVal : String) (val : Name) (preresolved : List Syntax.Preresolved) : KSyntax
   deriving Hashable, BEq, Inhabited, Repr
 
-partial def KSyntax.ofSyntax : Syntax → KSyntax
+private partial def KSyntax.ofSyntax : Syntax → KSyntax
   | .missing => .missing
   | .node _ kind args => .node kind (args.map KSyntax.ofSyntax)
   | .atom _ val => .atom val
   | .ident _ rawVal val preresolved => .ident rawVal.toString val preresolved
 
-structure ToExprCache where
-  unop : HashMap (Name × Expr) Expr := {}
-  binop : HashMap (Name × BinOpKind × Expr × Expr) Expr := {}
-  actop : HashMap (Name × ActOpKind × KSyntax × Expr) Expr := {}
+private inductive CacheKey
+  | unop (f : Name) (arg : Expr)
+  | binop (f : Name) (kind : BinOpKind) (lhs rhs : Expr)
+  | actop (f : Name) (kind : ActOpKind) (act : KSyntax) (arg : Expr)
+  deriving BEq, Hashable, Repr
 
-private def mkUnOp' (f : Expr) (arg : Expr) : StateRefT ToExprCache TermElabM Expr := do
-  let mk (x : Expr) := mkUnOp f x
+private structure ToExprState where
+  cache : HashMap CacheKey Expr := {}
+
+private def mkUnOp' (f : Expr) (arg : Expr) : StateRefT ToExprState TermElabM Expr := do
+  let mk := mkUnOp f arg
   let .const fname .. := f
-    | mk arg
+    | mk
   let argType ← instantiateMVars (← inferType arg)
   if isUnknown argType then
     trace[Elab.binop] "mkUnOp' type insufficient"
-    mk arg
+    mk
   else
-    let key := (fname, argType)
-    trace[Elab.binop] "mkUnOp' key {key}"
-    if let some e := (← get).unop.find? key then
+    let key := CacheKey.unop fname argType
+    trace[Elab.binop] "mkUnOp' key {repr key}"
+    if let some e := (← get).cache.find? key then
       trace[Elab.binop] "mkUnOp' cache hit"
-      return e.beta #[arg]
+      -- Optimized `e.instantiate1 arg`
+      return .app e.appFn! arg
     else
       trace[Elab.binop] "mkUnOp' cache miss"
-      let x ← mkFreshExprMVar argType
-      let e ← mk x
-      let e' ← mkLambdaFVars #[x] e
-      modify fun s => { s with unop := s.unop.insert key e' }
-      x.mvarId!.assign arg
-      instantiateMVars e
+      let e ← mk
+      if e.getAppNumArgs ≥ 1 then
+        trace[Elab.binop] "caching"
+        let e' := Expr.app e.appFn! (.bvar 0)
+        modify fun s => { s with cache := s.cache.insert key e' }
+      else
+        trace[Elab.binop] "cannot cache"
+      return e
 
-private def mkBinOp' (kind : BinOpKind) (f : Expr) (lhs rhs : Expr) : StateRefT ToExprCache TermElabM Expr := do
-  let mk (x y : Expr) := mkBinOp kind f x y
+private def mkBinOp' (kind : BinOpKind) (f : Expr) (lhs rhs : Expr) : StateRefT ToExprState TermElabM Expr := do
+  let mk := mkBinOp kind f lhs rhs
   let .const fname .. := f
-    | mk lhs rhs
+    | mk
   let lhsType ← instantiateMVars (← inferType lhs)
   let rhsType ← instantiateMVars (← inferType rhs)
   if isUnknown lhsType || isUnknown rhsType then
     trace[Elab.binop] "mkBinOp' types insufficient"
-    mk lhs rhs
+    mk
   else
-    let key := (fname, kind, lhsType, rhsType)
-    trace[Elab.binop] "mkBinOp' key {(fname, lhsType, rhsType)}"
-    if let some e := (← get).binop.find? key then
+    let key := CacheKey.binop fname kind lhsType rhsType
+    trace[Elab.binop] "mkBinOp' key {repr key}"
+    if let some e := (← get).cache.find? key then
       trace[Elab.binop] "mkBinOp' cache hit"
-      return e.beta #[lhs, rhs]
+      -- Optimized `e.instantiateRev #[lhs, rhs]`
+      return mkApp2 e.appFn!.appFn! lhs rhs
     else
       trace[Elab.binop] "mkBinOp' cache miss"
-      let x ← mkFreshExprMVar lhsType
-      let y ← mkFreshExprMVar rhsType
-      let e ← mk x y
-      let e' ← mkLambdaFVars #[x, y] e
-      modify fun s => { s with binop := s.binop.insert key e' }
-      x.mvarId!.assign lhs
-      y.mvarId!.assign rhs
-      instantiateMVars e
+      let e ← mk
+      if e.getAppNumArgs ≥ 2 then
+        trace[Elab.binop] "caching"
+        let e' := mkApp2 e.appFn!.appFn! (.bvar 1) (.bvar 0)
+        modify fun s => { s with cache := s.cache.insert key e' }
+      else
+        trace[Elab.binop] "cannot cache"
+      return e
 
-private def mkActOp' (kind : ActOpKind) (f : Expr) (act : Syntax) (arg : Expr) : StateRefT ToExprCache TermElabM Expr := do
+private def mkActOp' (kind : ActOpKind) (f : Expr) (act : Syntax) (arg : Expr) : StateRefT ToExprState TermElabM Expr := do
+  let mk := mkActOp kind f act arg
   let .const fname .. := f
-    | mkActOp kind f act arg
+    | mk
   let argType ← instantiateMVars (← inferType arg)
   if isUnknown argType then
     trace[Elab.binop] "mkActOp' type insufficient"
-    mkActOp kind f act arg
+    mk
   else
-    let key := (fname, kind, KSyntax.ofSyntax act, argType)
-    trace[Elab.binop] "mkActOp' key {(fname, repr <| KSyntax.ofSyntax act, argType)}"
-    if let some e := (← get).actop.find? key then
+    let key := CacheKey.actop fname kind (KSyntax.ofSyntax act) argType
+    trace[Elab.binop] "mkActOp' key {repr key}"
+    if let some e := (← get).cache.find? key then
       trace[Elab.binop] "mkActOp' cache hit"
-      -- Need to elaborate act and unify it with the pre-elaborated version.
-      -- Assumption: last two arguments are the arguments
-      let e' ← instantiateMVars (e.beta #[arg])
-      let arg := match kind with | .leftact => e'.appFn!.appArg! | .rightact => e'.appArg!
-      let act' ← elabTerm act (← inferType arg)
-      unless ← isDefEqGuarded act' arg do
+      let e := e.instantiate1 arg
+      -- Need to elaborate act and unify it with the pre-elaborated version to get infotrees.
+      let acte := match kind with | .leftact => e.appFn!.appArg! | .rightact => e.appArg!
+      let act' ← elabTermEnsuringType act (← inferType acte)
+      unless ← isDefEqGuarded act' acte do
         logWarningAt act m!"Is not defeq to cached value"
-      return e'
+      return e
     else
       trace[Elab.binop] "mkActOp' cache miss"
-      let x ← mkFreshExprMVar argType
-      let e ← mkActOp kind f act x
-      let e' ← mkLambdaFVars #[x] e
-      modify fun s => { s with actop := s.actop.insert key e' }
-      x.mvarId!.assign arg
-      instantiateMVars e
+      let e ← mk
+      if e.getAppNumArgs ≥ 2 then
+        trace[Elab.binop] "caching"
+        let e' :=
+          match kind with
+          | .leftact => Expr.app e.appFn! (.bvar 0)
+          | .rightact => mkApp2 e.appFn!.appFn! (.bvar 0) e.appArg!
+        modify fun s => { s with cache := s.cache.insert key e' }
+      else
+        trace[Elab.binop] "cannot cache"
+      return e
 
-private def toExprCore (t : Tree) : StateRefT ToExprCache TermElabM Expr := do
+private def toExprCore (t : Tree) : StateRefT ToExprState TermElabM Expr := do
   match t with
   | .term _ trees e =>
     modifyInfoState (fun s => { s with trees := s.trees ++ trees }); return e
