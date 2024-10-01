@@ -313,6 +313,18 @@ structure DelayedMetavarAssignment where
   fvars         : Array Expr
   mvarIdPending : MVarId
 
+/--
+Sometimes we have natural metavariables that we would later like to "promote" to be synthetic opaque.
+To do this, we need to record some information for how to "reverse" the assignment made by
+the `MkBinding.elimMVar` procedure.
+
+Given that `?m` was assigned using `?newMVar` and `fvars`, later we can construct a synthetic opaque
+metavariable `?m'` and delay assign `?newMVar fvars := ?m'.
+-/
+structure ElimAssignment where
+  newMVarId : MVarId
+  fvars     : Array Expr
+
 /-- The metavariable context is a set of metavariable declarations and their assignments.
 
 For more information on specifics see the comment in the file that `MetavarContext` is defined in.
@@ -336,6 +348,7 @@ structure MetavarContext where
   /-- Assignment table for delayed abstraction metavariables.
   For more information about delayed abstraction, see the docstring for `DelayedMetavarAssignment`. -/
   dAssignment    : PersistentHashMap MVarId DelayedMetavarAssignment := {}
+  elimAssignment : PersistentHashMap MVarId ElimAssignment := {}
 
 instance : Inhabited MetavarContext := ⟨{}⟩
 
@@ -516,6 +529,9 @@ the metavariable is not already assigned or delayed-assigned.
 -/
 def assignDelayedMVar [MonadMCtx m] (mvarId : MVarId) (fvars : Array Expr) (mvarIdPending : MVarId) : m Unit :=
   modifyMCtx fun m => { m with dAssignment := m.dAssignment.insert mvarId { fvars, mvarIdPending } }
+
+def addElimAssignment [MonadMCtx m] (mvarId : MVarId) (newMVarId : MVarId) (fvars : Array Expr) : m Unit :=
+  modifyMCtx fun m => { m with elimAssignment := m.elimAssignment.insert mvarId { newMVarId, fvars } }
 
 /-!
 ## Notes on artificial eta-expanded terms due to metavariables.
@@ -1144,6 +1160,7 @@ mutual
         }
       if !mvarDecl.kind.isSyntheticOpaque then
         mvarId.assign result
+        addElimAssignment mvarId newMVarId toRevert
       else
         /- If `mvarId` is the lhs of a delayed assignment `?m #[x_1, ... x_n] := ?mvarPending`,
            then `nestedFVars` is `#[x_1, ..., x_n]`.
@@ -1450,5 +1467,7 @@ def setFVarBinderInfo [MonadMCtx m] (mvarId : MVarId) (fvarId : FVarId)
   modifyMCtx (·.setFVarBinderInfo mvarId fvarId bi)
 
 end MVarId
+
+-- todo: generate synth opaques from elim information
 
 end Lean
