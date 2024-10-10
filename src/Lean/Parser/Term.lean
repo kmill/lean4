@@ -811,6 +811,13 @@ If `x` cannot be cleared (due to dependencies), it will keep `x` without failing
   "default_or_ofNonempty% " >> optional "unsafe"
 
 /--
+Helper for the `#eval` command, used to elaborate the term and give type hints.
+See `Lean.Elab.Command.elabTermForEval`.
+-/
+@[builtin_term_parser] def termForEval := leading_parser
+  "term_for_eval% " >> termParser
+
+/--
 Helper parser for marking `match`-alternatives that should not trigger errors if unused.
 We use them to implement `macro_rules` and `elab_rules`
 -/

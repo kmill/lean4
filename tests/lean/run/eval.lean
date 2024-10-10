@@ -93,6 +93,20 @@ Elaboration error, does not attempt to evaluate.
 #guard_msgs in #eval 2 + x
 
 /-!
+Unsolved-for metavariables
+-/
+set_option pp.mvars false in
+/--
+error: don't know how to synthesize implicit argument 'α'
+  @List.nil ?_
+context:
+⊢ Type _
+---
+error: failed to infer 'let' declaration type
+-/
+#guard_msgs in #eval let xs := []; 2
+
+/-!
 Defaulting to the CommandElabM monad
 -/
 /-- info: 2 : Nat -/
