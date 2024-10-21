@@ -78,9 +78,7 @@ partial def addPPExplicitToExposeDiff (a b : Expr) : MetaM (Expr × Expr) := do
 where
   visit (a b : Expr) : MetaM (Expr × Expr) := do
     try
-      if ← isDefEq a b then
-        return (a, b)
-      else if !a.isApp || !b.isApp || a.getAppNumArgs != b.getAppNumArgs then
+      if !a.isApp || !b.isApp || a.getAppNumArgs != b.getAppNumArgs then
         return (a, b)
       else if !(← isDefEq a.getAppFn b.getAppFn) then
         let (fa, fb) ← visit a.getAppFn b.getAppFn

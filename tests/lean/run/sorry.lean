@@ -62,13 +62,15 @@ It is not completely unique though. The `sorry` did not pay attention to variabl
 /-!
 Showing source position when surfacing differences.
 -/
+-- note: the module name is `sorry` and not `lean.run.sorry` in the testing environment,
+-- so this test fails in VS Code.
 /--
 error: type mismatch
   rfl
 has type
-  sorry = sorry `«lean.run.sorry:73:26» : Prop
+  sorry = sorry `«sorry:75:26» : Prop
 but is expected to have type
-  sorry = sorry `«lean.run.sorry:73:41» : Prop
+  sorry = sorry `«sorry:75:41» : Prop
 -/
 #guard_msgs in example : (sorry : Nat) = sorry := rfl
 
