@@ -214,7 +214,7 @@ private def elabTParserMacroAux (prec lhsPrec e : Term) : TermElabM Syntax := do
 
 @[builtin_term_elab «sorry»] def elabSorry : TermElab := fun _ expectedType? => do
   let type ← expectedType?.getDM mkFreshTypeMVar
-  mkUniqueSorry type (synthetic := false)
+  mkLabeledSorry type (synthetic := false) (unique := true)
 
 /-- Return syntax `Prod.mk elems[0] (Prod.mk elems[1] ... (Prod.mk elems[elems.size - 2] elems[elems.size - 1])))` -/
 partial def mkPairs (elems : Array Term) : MacroM Term :=

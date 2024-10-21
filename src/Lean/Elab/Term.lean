@@ -1109,7 +1109,7 @@ private def mkSyntheticSorryFor (expectedType? : Option Expr) : TermElabM Expr :
   let expectedType ← match expectedType? with
     | none              => mkFreshTypeMVar
     | some expectedType => pure expectedType
-  mkUniqueSorry expectedType (synthetic := true)
+  mkLabeledSorry expectedType (synthetic := true) (unique := false)
 
 /--
   Log the given exception, and create a synthetic sorry for representing the failed
@@ -1215,7 +1215,7 @@ The `tacticCode` syntax is the full `by ..` syntax.
 -/
 def mkTacticMVar (type : Expr) (tacticCode : Syntax) (kind : TacticMVarKind) : TermElabM Expr := do
   if ← pure (debug.byAsSorry.get (← getOptions)) <&&> isProp type then
-    withRef tacticCode <| mkUniqueSorry type false
+    withRef tacticCode <| mkLabeledSorry type false (unique := true)
   else
     let mvar ← mkFreshExprMVar type MetavarKind.syntheticOpaque
     let mvarId := mvar.mvarId!

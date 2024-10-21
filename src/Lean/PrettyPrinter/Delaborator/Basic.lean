@@ -222,14 +222,13 @@ def annotateTermInfo (stx : Term) : Delab := do
 
 /--
 Annotates the term with the current expression position and registers `TermInfo`
-to associate the term to the current expression, unless (1) the syntax has a position and it is for the current position
-and (2) there is already `TermInfo` at this position.
+to associate the term to the current expression, unless the syntax has a synthetic position
+and associated `Info` already.
 -/
 def annotateTermInfoUnlessAnnotated (stx : Term) : Delab := do
   if let .synthetic ⟨pos⟩ ⟨pos'⟩ := stx.raw.getHeadInfo then
-    if pos == pos' && pos == (← getPos) then
-      if (← get).infos.contains pos then
-        return stx
+    if pos == pos' && (← get).infos.contains pos then
+      return stx
   annotateTermInfo stx
 
 /--

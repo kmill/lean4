@@ -520,51 +520,57 @@ def mkSorry (type : Expr) (synthetic : Bool) : MetaM Expr := do
   let u ← getLevel type
   return mkApp2 (mkConst ``sorryAx [u]) type (toExpr synthetic)
 
-structure UniqueSorryView where
-  module? : Option Name := none
-  range? : Option Lsp.Range := none
+structure SorryLabelView where
+  module? : Option (Name × Lsp.Range) := none
 
-def UniqueSorryView.encode (view : UniqueSorryView) : CoreM Name :=
-  let name := view.module?.getD .anonymous
+def SorryLabelView.encode (view : SorryLabelView) : CoreM Name :=
   let name :=
-    if let some range := view.range? then
-      name |>.num range.start.line |>.num range.start.character |>.num range.end.line |>.num range.end.character
+    if let some (mod, range) := view.module? then
+      mod |>.num range.start.line |>.num range.start.character |>.num range.end.line |>.num range.end.character
     else
-      name
+      .anonymous
   mkFreshUserName (name.str "_unique_sorry")
 
-def UniqueSorryView.decode? (name : Name) : Option UniqueSorryView := do
+def SorryLabelView.decode? (name : Name) : Option SorryLabelView := do
   guard <| name.hasMacroScopes
   let .str name "_unique_sorry" := name.eraseMacroScopes | failure
   if let .num (.num (.num (.num name startLine) startChar) endLine) endChar := name then
-    return { module? := name, range? := some ⟨⟨startLine, startChar⟩, ⟨endLine, endChar⟩⟩ }
-  else if name.isAnonymous then
-    return { module? := none, range? := none }
+    return { module? := some (name, ⟨⟨startLine, startChar⟩, ⟨endLine, endChar⟩⟩) }
   else
     failure
 
 /--
-Makes a `sorryAx` that is unique, in the sense that it is not defeq to any other `sorry` created by `mkUniqueSorry`.
-
-Encodes the source position of the current ref into the term.
+Makes a `sorryAx` that encodes the current ref into the term to support "go to definition" for the `sorry`.
+If `unique` is true, the `sorry` is unique, in the sense that it is not defeq to any other `sorry` created by `mkLabeledSorry`.
 -/
-def mkUniqueSorry (type : Expr) (synthetic : Bool) : MetaM Expr := do
+def mkLabeledSorry (type : Expr) (synthetic : Bool) (unique : Bool) : MetaM Expr := do
   let tag ←
     if let (some pos, some endPos) := ((← getRef).getPos?, (← getRef).getTailPos?) then
       let range := (← getFileMap).utf8RangeToLspRange ⟨pos, endPos⟩
-      UniqueSorryView.encode { module? := (← getMainModule), range? := range }
+      SorryLabelView.encode { module? := (← getMainModule, range) }
     else
-      UniqueSorryView.encode {}
-  let e ← mkSorry (mkForall `tag .default (mkConst ``Lean.Name) type) synthetic
-  return .app e (toExpr tag)
+      SorryLabelView.encode {}
+  if unique then
+    let e ← mkSorry (mkForall `tag .default (mkConst ``Lean.Name) type) synthetic
+    return .app e (toExpr tag)
+  else
+    let e ← mkSorry (mkForall `tag .default (mkConst ``Unit) type) synthetic
+    return .app e (mkApp4 (mkConst ``Function.const [levelOne, levelOne])
+      (mkConst ``Unit) (mkConst ``Lean.Name) (mkConst ``Unit.unit) (toExpr tag))
 
 /--
-Returns a `UniqueSorryView` if `e` is an application of an expression returned by `mkUniqueSorry`.
+Returns a `SorryLabelView` if `e` is an application of an expression returned by `mkLabeledSorry`.
 -/
-def isUniqueSorry? (e : Expr) : Option UniqueSorryView := do
+def isLabeledSorry? (e : Expr) : Option SorryLabelView := do
   guard <| e.isAppOf ``sorryAx && e.getAppNumArgs ≥ 3
-  let some tag := (e.getArg! 2).name? | failure
-  UniqueSorryView.decode? tag
+  let arg := e.getArg! 2
+  if let some tag := arg.name? then
+    SorryLabelView.decode? tag
+  else
+    guard <| arg.isAppOfArity ``Function.const 4
+    guard <| arg.appFn!.appArg!.isAppOfArity ``Unit.unit 0
+    let some tag := arg.appArg!.name? | failure
+    SorryLabelView.decode? tag
 
 /-- Return `Decidable.decide p` -/
 def mkDecide (p : Expr) : MetaM Expr :=

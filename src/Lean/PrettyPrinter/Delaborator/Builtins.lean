@@ -1014,7 +1014,7 @@ Delaborates an `OfNat.ofNat` literal.
 `@OfNat.ofNat _ n _` ~> `n`.
 -/
 @[builtin_delab app.OfNat.ofNat]
-def delabOfNat : Delab := whenPPOption getPPCoercions <| withOverApp 3 do
+def delabOfNat : Delab := whenNotPPOption getPPExplicit <| whenPPOption getPPCoercions <| withOverApp 3 do
   delabOfNatCore (showType := (← getPPOption getPPNumericTypes))
 
 /--
@@ -1022,7 +1022,7 @@ Delaborates the negative of an `OfNat.ofNat` literal.
 `-@OfNat.ofNat _ n _` ~> `-n`
 -/
 @[builtin_delab app.Neg.neg]
-def delabNeg : Delab := whenPPOption getPPCoercions do
+def delabNeg : Delab := whenNotPPOption getPPExplicit <| whenPPOption getPPCoercions do
   delabNegIntCore (showType := (← getPPOption getPPNumericTypes))
 
 /--
@@ -1031,12 +1031,12 @@ Delaborates a rational number literal.
 and `-@OfNat.ofNat _ n _ / @OfNat.ofNat _ m` ~> `-n / m`
 -/
 @[builtin_delab app.HDiv.hDiv]
-def delabHDiv : Delab := whenPPOption getPPCoercions do
+def delabHDiv : Delab := whenNotPPOption getPPExplicit <| whenPPOption getPPCoercions do
   delabDivRatCore (showType := (← getPPOption getPPNumericTypes))
 
 -- `@OfDecimal.ofDecimal _ _ m s e` ~> `m*10^(sign * e)` where `sign == 1` if `s = false` and `sign = -1` if `s = true`
 @[builtin_delab app.OfScientific.ofScientific]
-def delabOfScientific : Delab := whenPPOption getPPCoercions <| withOverApp 5 do
+def delabOfScientific : Delab := whenNotPPOption getPPExplicit <| whenPPOption getPPCoercions <| withOverApp 5 do
   let expr ← getExpr
   guard <| expr.getAppNumArgs == 5
   let .lit (.natVal m) ← pure (expr.getArg! 2) | failure
@@ -1229,12 +1229,13 @@ def delabNameMkNum : Delab := delabNameMkStr
 @[builtin_delab app.sorryAx]
 def delabSorry : Delab := whenPPOption getPPNotation <| whenNotPPOption getPPExplicit do
   guard <| (← getExpr).getAppNumArgs ≥ 2
-  -- If this is constructed by `Lean.Meta.mkUniqueSorry`, then don't print the unique tag.
+  let sorrySource ← getPPOption getPPSorrySource
+  -- If this is constructed by `Lean.Meta.mkLabeledSorry`, then don't print the unique tag.
   -- But, if `pp.explicit` is false and `pp.sorrySource` is true, then print a simplified version of the tag.
-  if let some view := isUniqueSorry? (← getExpr) then
+  if let some view := isLabeledSorry? (← getExpr) then
     withOverApp 3 do
-      if let (some module, some range) := (view.module?, view.range?) then
-        if ← getPPOption getPPSorrySource then
+      if let some (module, range) := view.module? then
+        if ← pure sorrySource <||> getPPOption getPPSorrySource then
           -- LSP line numbers start at 0, so add one to it.
           -- Technically using the character as the column is incorrect since this is UTF-16 position, but we have no filemap to work with.
           let posAsName := Name.mkSimple s!"{module}:{range.start.line + 1}:{range.start.character}"

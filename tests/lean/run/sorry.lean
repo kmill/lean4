@@ -58,3 +58,30 @@ but is expected to have type
 It is not completely unique though. The `sorry` did not pay attention to variables in the local context.
 -/
 #guard_msgs in example : f 1 0 = f 0 0 := rfl
+
+/-!
+Showing source position when surfacing differences.
+-/
+/--
+error: type mismatch
+  rfl
+has type
+  sorry = sorry `«lean.run.sorry:73:26» : Prop
+but is expected to have type
+  sorry = sorry `«lean.run.sorry:73:41» : Prop
+-/
+#guard_msgs in example : (sorry : Nat) = sorry := rfl
+
+/-!
+Elaboration errors are just labeled, not unique, to limit cascading errors.
+-/
+/--
+error: unknown identifier 'a'
+---
+error: unknown identifier 'b'
+---
+info: ⊢ sorry = sorry
+-/
+#guard_msgs in
+set_option autoImplicit false in
+example : a = b := by trace_state; rfl
