@@ -212,7 +212,7 @@ where
   }
 
 /--
-Annotate the term with the current expression position and register `TermInfo`
+Annotates the term with the current expression position and registers `TermInfo`
 to associate the term to the current expression.
 -/
 def annotateTermInfo (stx : Term) : Delab := do
