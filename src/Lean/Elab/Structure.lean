@@ -255,8 +255,6 @@ def structureSyntaxToView (modifiers : Modifiers) (stx : Syntax) : TermElabM Str
   let modifiers := if isClass then modifiers.addAttr { name := `class } else modifiers
   let declId    := stx[1]
   let ⟨name, declName, levelNames⟩ ← Term.expandDeclId (← getCurrNamespace) (← Term.getLevelNames) declId modifiers
-  if (← getLCtx).usesUserName name then
-    throwErrorAt declId "invalid declaration name '{name}', there is a section variable with the same name"
   addDeclarationRanges declName modifiers.stx stx
   let binders   := stx[2]
   let exts      := stx[3]
@@ -1029,16 +1027,19 @@ def elabStructureView (vars : Array Expr) (view : StructView) : TermElabM Unit :
       Lean.Meta.IndPredBelow.mkBelow view.declName
       mkSizeOfInstances view.declName
       mkInjectiveTheorems view.declName
-  liftCommandElabM <| view.derivingClasses.forM fun classView => classView.applyHandlers #[view.declName]
-  resetSynthInstanceCache
-  Term.withDeclName view.declName <| withRef view.declId do
+
+def elabStructureViewPostprocessing (view : StructView) : CommandElabM Unit := do
+  view.derivingClasses.forM fun classView => classView.applyHandlers #[view.declName]
+  runTermElabM fun _ => Term.withDeclName view.declName <| withRef view.declId do
     Term.applyAttributesAt view.declName view.modifiers.attrs .afterCompilation
 
 def elabStructure (modifiers : Modifiers) (stx : Syntax) : CommandElabM Unit := do
-  runTermElabM fun vars => do
+  let view ← runTermElabM fun vars => do
     let view ← structureSyntaxToView modifiers stx
     trace[Elab.structure] "view.levelNames: {view.levelNames}"
     elabStructureView vars view
+    pure view
+  elabStructureViewPostprocessing view
 
 builtin_initialize registerTraceClass `Elab.structure
 
