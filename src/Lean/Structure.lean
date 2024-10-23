@@ -213,7 +213,7 @@ def isStructureLike (env : Environment) (constName : Name) : Bool :=
 
 def getStructureLikeCtor? (env : Environment) (constName : Name) : Option ConstructorVal :=
   match env.find? constName with
-  | some (.inductInfo { isRec := false, ctors := [ctorName], .. }) =>
+  | some (.inductInfo { isRec := false, ctors := [ctorName], numIndices := 0, .. }) =>
     match env.find? ctorName with
     | some (ConstantInfo.ctorInfo val) => val
     | _ => panic! "ill-formed environment"
