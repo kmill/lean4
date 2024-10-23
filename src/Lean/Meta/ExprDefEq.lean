@@ -2013,7 +2013,7 @@ private def isDefEqApp (t s : Expr) : MetaM Bool := do
 /-- Return `true` if the type of the given expression is an inductive datatype with a single constructor with no fields. -/
 private def isDefEqUnitLike (t : Expr) (s : Expr) : MetaM Bool := do
   let tType ← whnf (← inferType t)
-  matchConstStruct tType.getAppFn (fun _ => return false) fun _ _ ctorVal => do
+  matchConstStructureLike tType.getAppFn (fun _ => return false) fun _ _ ctorVal => do
     if ctorVal.numFields != 0 then
       return false
     else if (← useEtaStruct ctorVal.induct) then

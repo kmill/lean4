@@ -12,6 +12,17 @@ structure A1 where
 #guard_msgs in #check A1
 
 /-!
+Projections
+-/
+section
+variable (a : A1)
+/-- info: a.xs : List A1 -/
+#guard_msgs in #check a.xs
+/-- info: a.xs : List A1 -/
+#guard_msgs in #check a.1
+end
+
+/-!
 A parameter
 -/
 structure A2 (n : Nat) where
@@ -20,6 +31,21 @@ structure A2 (n : Nat) where
 
 /-- info: A2 (n : Nat) : Type -/
 #guard_msgs in #check A2
+
+/-!
+Numeric projections
+-/
+section
+variable (a : A2 2)
+/-- info: a.x : Fin 2 -/
+#guard_msgs in #check a.x
+/-- info: a.xs : List (A2 2) -/
+#guard_msgs in #check a.xs
+/-- info: a.x : Fin 2 -/
+#guard_msgs in #check a.1
+/-- info: a.xs : List (A2 2) -/
+#guard_msgs in #check a.2
+end
 
 /-!
 A variable
@@ -76,21 +102,6 @@ def Foo'.preorder : Foo' → String
 #guard_msgs in #check Foo'.preorder
 
 /-!
-Expected failure to use numeric projection notation.
-This should be fixed at some point. A number of processes assume is_structure_like.
--/
-section
-variable (a : A1)
-/--
-error: invalid projection, structure expected
-  a
-has type
-  A1
--/
-#guard_msgs in #check a.1
-end
-
-/-!
 Extending with default values.
 -/
 structure A5 extends A4 Nat Bool where
@@ -105,3 +116,20 @@ Incidental new feature: checking projections when the structure is Prop.
 structure Exists' {α : Sort _} (p : α → Prop) : Prop where
   x : α
   h : p x
+
+/-!
+Testing numeric projections on recursive inductive types now that the elaborator isn't restricted to structure-likes.
+-/
+inductive I1 where
+  | mk (x : Nat) (xs : I1)
+/-- info: fun v => v.1 : I1 → Nat -/
+#guard_msgs in #check fun (v : I1) => v.1
+/-- info: fun v => v.2 : I1 → I1 -/
+#guard_msgs in #check fun (v : I1) => v.2
+
+inductive I2 : Nat → Type where
+  | mk (x : Nat) (xs : I2 (x + 1)) : I2 x
+/-- info: fun v => v.1 : I2 2 → Nat -/
+#guard_msgs in #check fun (v : I2 2) => v.1
+/-- info: fun v => v.2 : (v : I2 2) → I2 (v.1 + 1) -/
+#guard_msgs in #check fun (v : I2 2) => v.2

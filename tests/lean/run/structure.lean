@@ -58,6 +58,7 @@ info: #[const2ModIdx, constants, extensions, extraConstNames, header]
 
 /-!
 Regression test: make sure mathlib `Type*` still elaborates with levels in correct order.
+During development, this came out as `AddEquiv.{u_10, u_9}`.
 -/
 section
 elab "Type*" : term => do
