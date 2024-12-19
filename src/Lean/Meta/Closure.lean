@@ -193,7 +193,57 @@ partial def collectExprAux (e : Expr) : ClosureM Expr := do
   | Expr.forallE _ d b _ => return e.updateForallE! (← collect d) (← collect b)
   | Expr.lam _ d b _     => return e.updateLambdaE! (← collect d) (← collect b)
   | Expr.letE _ t v b _  => return e.updateLet! (← collect t) (← collect v) (← collect b)
-  | Expr.app f a         => return e.updateApp! (← collect f) (← collect a)
+  | Expr.app ..          =>
+    e.withApp fun f args => do
+      /-
+      Recall that delayed assignment metavariables must always be applied to at least
+      `a.fvars.size` arguments (where `a : DelayedMetavarAssignment` is its record).
+      This assumption is used in `lean::instantiate_mvars_fn::visit_app` for example,
+      where there's a comment about how under-applied delayed assignments are an error.
+
+      If we were to collect the delayed assignment metavariable itself and push it onto the
+      `exprMVarArgs` list in the `Expr.mvar` case of this `match`, then `exprArgs` returned by
+      `Lean.Meta.Closure.mkValueTypeClosure` would contain underapplied delayed assignment metavariables.
+      This leads to kernel 'declaration has metavariables' errors, as reported in https://github.com/leanprover/lean4/issues/6354
+
+      The straightforward solution to this problem is to eta expand the first `fvars.size` arguments
+      of the delayed assignment metavariable to ensure it is fully applied.
+      However, in case the first `a.fvars.size` arguments are fvars that aren't zeta reduced,
+      then since fvars are being collected anyway, we can extract this application instead.
+      -/
+      if let Expr.mvar mvarId := f then
+        if let some { fvars, .. } ← getDelayedMVarAssignment? mvarId then
+          if fvars.size ≤ args.size then
+            let args' ← args.mapM collect
+            if args'[0:fvars.size].all (·.isFVar) then
+              -- Special case: all arguments are extracted fvars.
+              -- This `inferType` is OK since only mvars and fvars can yield fvars (hence no bvars are present)
+              let type ← preprocess (← inferType (mkAppN f args[0:fvars.size]))
+              let type ← collect type
+              let newFVarId ← mkFreshFVarId
+              let userName ← mkNextUserName
+              modify fun s => { s with
+                newLocalDeclsForMVars := s.newLocalDeclsForMVars.push $ .cdecl default newFVarId userName type .default .default,
+                exprMVarArgs          := s.exprMVarArgs.push (mkAppN f args'[0:fvars.size])
+              }
+              return mkAppN (mkFVar newFVarId) args'[fvars.size:]
+            else
+              -- General case: eta expand
+              let mvarDecl ← mvarId.getDecl
+              let type ← preprocess mvarDecl.type
+              let type ← collect type
+              let newFVarId ← mkFreshFVarId
+              let userName ← mkNextUserName
+              let e' ← forallBoundedTelescope mvarDecl.type fvars.size fun args _ => do
+                mkLambdaFVars args <| mkAppN e args
+              modify fun s => { s with
+                newLocalDeclsForMVars := s.newLocalDeclsForMVars.push $ .cdecl default newFVarId userName type .default .default,
+                exprMVarArgs          := s.exprMVarArgs.push e'
+              }
+              return mkAppN (mkFVar newFVarId) args'
+      let f ← collect f
+      let args ← args.mapM collect
+      return mkAppN f args
   | Expr.mdata _ b       => return e.updateMData! (← collect b)
   | Expr.sort u          => return e.updateSort! (← collectLevel u)
   | Expr.const _ us      => return e.updateConst! (← us.mapM collectLevel)
@@ -203,34 +253,9 @@ partial def collectExprAux (e : Expr) : ClosureM Expr := do
     let type ← collect type
     let newFVarId ← mkFreshFVarId
     let userName ← mkNextUserName
-    /-
-    Recall that delayed assignment metavariables must always be applied to at least
-    `a.fvars.size` arguments (where `a : DelayedMetavarAssignment` is its record).
-    This assumption is used in `lean::instantiate_mvars_fn::visit_app` for example, where there's a comment
-    about how under-applied delayed assignments are an error.
-
-    If we were to collect the delayed assignment metavariable itself and push it onto the `exprMVarArgs` list,
-    then `exprArgs` returned by `Lean.Meta.Closure.mkValueTypeClosure` would contain underapplied delayed assignment metavariables.
-    This leads to kernel 'declaration has metavariables' errors, as reported in https://github.com/leanprover/lean4/issues/6354
-
-    The straightforward solution to this problem (implemented below) is to eta expand the delayed assignment metavariable
-    to ensure it is fully applied. This isn't full eta expansion; we only need to eta expand the first `fvars.size` arguments.
-
-    Note: there is the possibility of handling special cases to create more-efficient terms.
-    For example, if the delayed assignment metavariable is applied to fvars, we could avoid eta expansion for those arguments
-    since the fvars are being collected anyway. It's not clear that the additional implementation complexity is worth it,
-    and it is something we can evaluate later. In any case, the current solution is necessary as the generic case.
-    -/
-    let e' ←
-      if let some { fvars, .. } ← getDelayedMVarAssignment? mvarId then
-        -- Eta expand `e` for the requisite number of arguments.
-        forallBoundedTelescope mvarDecl.type fvars.size fun args _ => do
-          mkLambdaFVars args <| mkAppN e args
-      else
-        pure e
     modify fun s => { s with
       newLocalDeclsForMVars := s.newLocalDeclsForMVars.push $ .cdecl default newFVarId userName type .default .default,
-      exprMVarArgs          := s.exprMVarArgs.push e'
+      exprMVarArgs          := s.exprMVarArgs.push e
     }
     return mkFVar newFVarId
   | Expr.fvar fvarId =>
