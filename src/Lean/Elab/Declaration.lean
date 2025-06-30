@@ -113,7 +113,7 @@ def elabAxiom (modifiers : Modifiers) (stx : Syntax) : CommandElabM Unit := do
       Term.synthesizeSyntheticMVarsNoPostponing
       let xs ← Term.addAutoBoundImplicits xs (declId.getTailPos? (canonicalOnly := true))
       let type ← instantiateMVars type
-      let type ← mkForallFVars xs type
+      let type ← mkForallFVars xs type (generalizeNondepLet := false)
       let type ← mkForallFVars vars type (usedOnly := true)
       let type ← Term.levelMVarToParam type
       let usedParams  := collectLevelParams {} type |>.params

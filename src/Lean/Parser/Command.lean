@@ -91,14 +91,32 @@ such as inductive constructors, structure projections, and `let rec` / `where` d
 -- @[builtin_doc] -- FIXME: suppress the hover
 def declId := leading_parser
   ident >> optional (".{" >> sepBy1 (recover ident (skipUntil (fun c => c.isWhitespace || c ∈ [',', '}']))) ", " >> "}")
+/--
+Local definition binder, like `(let x := v)` or `(let := v)`.
+Provides a local definition like a `let` expression.
+-/
+@[builtin_doc] def letBinder := leading_parser ppGroup <|
+  atomic ("(" >> "let") >> withoutPosition Term.letIdDecl >> ")"
+/--
+Local definition binder, like `(have x := v)` or `(have := v)`.
+Provides a local constant like a `have` expression.
+-/
+@[builtin_doc] def haveBinder := leading_parser ppGroup <|
+  atomic ("(" >> "have") >> withoutPosition Term.letIdDecl >> ")"
+def ldeclBinder :=
+  letBinder <|> haveBinder
+def declBinder :=
+  withAntiquot (mkAntiquot "declBinder" decl_name% (isPseudoKind := true)) <|
+    ldeclBinder <|> Term.binderIdent <|> Term.bracketedBinder
+instance : Coe (TSyntax ``Term.bracketedBinder) (TSyntax ``declBinder) where coe s := ⟨s⟩
 /-- `declSig` matches the signature of a declaration with required type: a list of binders and then `: type` -/
 -- @[builtin_doc] -- FIXME: suppress the hover
 def declSig := leading_parser
-  many (ppSpace >> (Term.binderIdent <|> Term.bracketedBinder)) >> Term.typeSpec
+  many (ppSpace >> declBinder) >> Term.typeSpec
 /-- `optDeclSig` matches the signature of a declaration with optional type: a list of binders and then possibly `: type` -/
 -- @[builtin_doc] -- FIXME: suppress the hover
 def optDeclSig := leading_parser
-  many (ppSpace >> (Term.binderIdent <|> Term.bracketedBinder)) >> Term.optType
+  many (ppSpace >> declBinder) >> Term.optType
 /-- Right-hand side of a `:=` in a declaration, a term. -/
 def declBody : Parser :=
   /-

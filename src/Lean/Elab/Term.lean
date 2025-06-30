@@ -1899,7 +1899,7 @@ where
         if auto.isFVar then
           let localDecl ← auto.fvarId!.getDecl
           for x in xs do
-            if (← localDeclDependsOn localDecl x.fvarId!) then
+            if (← localDeclDependsOn (generalizeNondepLet := false) localDecl x.fvarId!) then
               throwError "invalid auto implicit argument '{auto}', it depends on explicitly provided argument '{x}'"
       return autos ++ xs
     | auto :: todo =>
@@ -1918,7 +1918,7 @@ def addAutoBoundImplicits' (xs : Array Expr) (type : Expr) (k : Array Expr → E
   if xs.all (·.isFVar) then
     k xs type
   else
-    forallBoundedTelescope (← mkForallFVars xs type) xs.size fun xs type => k xs type
+    forallBoundedTelescope (← mkForallFVars xs type (generalizeNondepLet := false)) xs.size fun xs type => k xs type
 
 def mkAuxName (suffix : Name) : TermElabM Name := mkAuxDeclName (kind := suffix)
 

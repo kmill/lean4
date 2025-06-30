@@ -376,6 +376,10 @@ use `(_)` to inhibit this and have it be solved for by unification instead, like
     explicitBinder requireType <|> strictImplicitBinder requireType <|>
     implicitBinder requireType <|> instBinder
 
+/-- `bracketedBinder` without the optional argument. -/
+def bracketedBinderF := bracketedBinder
+instance : Coe (TSyntax ``bracketedBinderF) (TSyntax ``bracketedBinder) where coe s := ⟨s⟩
+
 /-
 It is feasible to support dependent arrows such as `{α} → α → α` without sacrificing the quality of the error messages for the longer case.
 `{α} → α → α` would be short for `{α : Type} → α → α`
@@ -1063,9 +1067,6 @@ See the Chapter "Quantifiers and Equality" in the manual
 -/
 @[builtin_term_parser] def subst := trailing_parser:75
   " ▸ " >> sepBy1 (termParser 75) " ▸ "
-
-def bracketedBinderF := bracketedBinder  -- no default arg
-instance : Coe (TSyntax ``bracketedBinderF) (TSyntax ``bracketedBinder) where coe s := ⟨s⟩
 
 /--
 `panic! msg` formally evaluates to `@Inhabited.default α` if the expected type

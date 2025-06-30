@@ -121,7 +121,7 @@ def resetMVarUserNames (toReset : Array MVarId) : MetaM Unit := do
   (temporarily) use the corresponding parameter name (with a fresh macro scope) as the user facing name for `?m`.
   The "renaming" is temporary.
 -/
-def mkForallFVars' (xs : Array Expr) (type : Expr) : MetaM Expr := do
+def mkForallFVars' (xs : Array Expr) (type : Expr) (generalizeNondepLet := true) : MetaM Expr := do
   if (← xs.anyM shouldInferBinderName) then
     let setMVarsAt (e : Expr) : StateRefT (Array MVarId) MetaM Unit := do
       let mvarIds ← setMVarUserNamesAt e xs
@@ -131,11 +131,11 @@ def mkForallFVars' (xs : Array Expr) (type : Expr) : MetaM Expr := do
         for x in xs do
           setMVarsAt (← inferType x)
         setMVarsAt type
-        mkForallFVars xs type
+        mkForallFVars xs type (generalizeNondepLet := generalizeNondepLet)
       finally
         resetMVarUserNames (← get)
     go |>.run' #[]
   else
-    mkForallFVars xs type
+    mkForallFVars xs type (generalizeNondepLet := generalizeNondepLet)
 
 end Lean.Meta

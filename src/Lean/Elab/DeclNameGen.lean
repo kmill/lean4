@@ -238,7 +238,7 @@ def mkBaseNameWithSuffix' (pre : String) (binders : Array Syntax) (type : Syntax
   let name ←
     try
       Term.withAutoBoundImplicit <| Term.elabBinders binders fun binds => Term.withoutErrToSorry do
-        let ty ← mkForallFVars binds (← Term.elabType type)
+        let ty ← mkForallFVars binds (← Term.elabType type) (generalizeNondepLet := false)
         mkBaseNameWithSuffix pre ty
     catch _ =>
       mkFreshUserName <| Name.mkSimple pre

@@ -61,6 +61,10 @@ structure BinderView where
   id   : Syntax
   type : Syntax
   bi   : BinderInfo
+  /-- If this is a `let`/`have` binder, whether it should be a `have`. -/
+  nondep : Bool := false
+  /-- Non-`none` if this is a `let`/`have` binder. In that case, `bi` is ignored. -/
+  value? : Option Syntax := none
 
 /--
 Determines the local declaration kind depending on the variable name.
@@ -175,6 +179,19 @@ private def toBinderViews (stx : Syntax) : TermElabM (Array BinderView) := do
     let id ← expandOptIdent stx[1]
     let type := stx[2]
     return #[ { ref := id, id := id, type := type, bi := .instImplicit } ]
+  else if k == ``Lean.Parser.Command.letBinder || k == ``Lean.Parser.Command.haveBinder then
+    -- `(` ("let" <|> "have") letIdDecl ")" `)`
+    let nondep := k == ``Lean.Parser.Command.haveBinder
+    let `(letIdDecl| $id:letId $bs* $[: $ty?]? := $v) := stx[2] | throwUnsupportedSyntax
+    let v ← if let some ty := ty? then `(($v : $ty)) else pure v
+    -- `letIdBinder` is compatible with `funBinder`.
+    let v ← if bs.isEmpty then pure v else `(fun $bs* => $v)
+    let id ←
+      match id with
+      | `(letId| $id:ident)      => pure id
+      | `(letId| $h:hygieneInfo) => pure <| HygieneInfo.mkIdent h `this (canonical := true)
+      | _                        => mkFreshIdent id (canonical := true)
+    return #[ { ref := id, id, type := mkHole id, bi := .default, value? := v, nondep } ]
   else
     throwUnsupportedSyntax
 
@@ -212,16 +229,28 @@ private partial def elabBinderViews (binderViews : Array BinderView) (fvars : Ar
       let binderView := binderViews[i]
       ensureAtomicBinderName binderView
       let type ← elabType binderView.type
-      registerFailedToInferBinderTypeInfo type binderView.type
-      if binderView.bi.isInstImplicit && checkBinderAnnotations.get (← getOptions) then
-        unless (← isClass? type).isSome do
-          throwErrorAt binderView.type (m!"invalid binder annotation, type is not a class instance{indentExpr type}" ++ .note "Use the command `set_option checkBinderAnnotations false` to disable the check")
-        withRef binderView.type <| checkLocalInstanceParameters type
-      let id := binderView.id.getId
-      let kind := kindOfBinderName id
-      withLocalDecl id binderView.bi type (kind := kind) fun fvar => do
-        addLocalVarInfo binderView.ref fvar
-        loop (i+1) (fvars.push (binderView.id, fvar))
+      match binderView.value? with
+      | none =>
+        registerFailedToInferBinderTypeInfo type binderView.type
+        if binderView.bi.isInstImplicit && checkBinderAnnotations.get (← getOptions) then
+          unless (← isClass? type).isSome do
+            throwErrorAt binderView.type (m!"invalid binder annotation, type is not a class instance{indentExpr type}" ++ .note "Use the command `set_option checkBinderAnnotations false` to disable the check")
+          withRef binderView.type <| checkLocalInstanceParameters type
+        let id := binderView.id.getId
+        let kind := kindOfBinderName id
+        withLocalDecl id binderView.bi type (kind := kind) fun fvar => do
+          addLocalVarInfo binderView.ref fvar
+          loop (i+1) (fvars.push (binderView.id, fvar))
+      | some valueStx =>
+        let letMsg := if binderView.nondep then "have" else "let"
+        registerCustomErrorIfMVar type binderView.type m!"failed to infer '{letMsg}' declaration type"
+        registerLevelMVarErrorExprInfo type binderView.type m!"failed to infer universe levels in '{letMsg}' declaration type"
+        let id := binderView.id.getId
+        let kind := kindOfBinderName id
+        let value ← elabTermEnsuringType valueStx type
+        withLetDecl id type value (kind := kind) (nondep := binderView.nondep) fun fvar => do
+          addLocalVarInfo binderView.ref fvar
+          loop (i+1) (fvars.push (binderView.id, fvar))
     else
       k fvars
   loop 0 fvars
@@ -420,6 +449,7 @@ private def propagateExpectedType (fvar : Expr) (fvarType : Expr) (s : State) : 
 private partial def elabFunBinderViews (binderViews : Array BinderView) (i : Nat) (s : State) : TermElabM State := do
   if h : i < binderViews.size then
     let binderView := binderViews[i]
+    assert! binderView.value?.isNone
     ensureAtomicBinderName binderView
     withRef binderView.type <| withLCtx s.lctx s.localInsts do
       let type ← elabType binderView.type
@@ -774,12 +804,12 @@ def elabLetDeclAux (id : Syntax) (binders : Array Syntax) (typeStx : Syntax) (va
     registerCustomErrorIfMVar type typeStx m!"failed to infer '{letMsg}' declaration type"
     registerLevelMVarErrorExprInfo type typeStx m!"failed to infer universe levels in '{letMsg}' declaration type"
     if config.postponeValue then
-      let type ← mkForallFVars fvars type
+      let type ← mkForallFVars (generalizeNondepLet := false) fvars type
       let val  ← mkFreshExprMVar type
       pure (type, val, binders)
     else
       let val  ← elabTermEnsuringType valStx type
-      let type ← mkForallFVars fvars type
+      let type ← mkForallFVars (generalizeNondepLet := false) fvars type
       /- By default `mkLambdaFVars` and `mkLetFVars` create binders only for let-declarations that are actually used
          in the body. This generates counterintuitive behavior in the elaborator since users will not be notified
          about holes such as
@@ -789,7 +819,7 @@ def elabLetDeclAux (id : Syntax) (binders : Array Syntax) (typeStx : Syntax) (va
             42
          ```
        -/
-      let val  ← mkLambdaFVars fvars val (usedLetOnly := false)
+      let val  ← mkLambdaFVars (generalizeNondepLet := false) fvars val (usedLetOnly := false)
       pure (type, val, binders)
   let kind := kindOfBinderName id.getId
   trace[Elab.let.decl] "{id.getId} : {type} := {val}"

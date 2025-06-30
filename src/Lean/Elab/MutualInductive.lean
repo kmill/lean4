@@ -307,6 +307,10 @@ private def elabHeadersAux (views : Array InductiveView) (i : Nat) (acc : Array 
               throwErrorAt typeStx "invalid resulting type, expecting 'Type _' or 'Prop'"
           return (type, indices.size)
         let params ← Term.addAutoBoundImplicits params (view.declId.getTailPos? (canonicalOnly := true))
+        params.forM fun param => do
+          if let .fvar fvarId := param then
+            if (← fvarId.isLetVar true) then
+              throwError "`let`/`have` binders are not yet supported in inductive type definitions"
         trace[Elab.inductive] "header params: {params}, type: {type}"
         let levelNames ← Term.getLevelNames
         let type ← mkForallFVars params type

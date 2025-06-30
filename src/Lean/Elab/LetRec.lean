@@ -60,7 +60,7 @@ private def mkLetRecDeclView (letRec : Syntax) : TermElabM LetRecView := do
           let type ← elabType typeStx
           registerCustomErrorIfMVar type typeStx "failed to infer 'let rec' declaration type"
           let (binderIds, xs) := xs.unzip
-          let type ← mkForallFVars xs type
+          let type ← mkForallFVars (generalizeNondepLet := false) xs type
           pure (type, binderIds)
       let mvar ← mkFreshExprMVar type MetavarKind.syntheticOpaque
       let valStx ← if decl.isOfKind `Lean.Parser.Term.letIdDecl then
